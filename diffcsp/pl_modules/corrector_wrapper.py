@@ -3,20 +3,45 @@ import sys
 import torch
 sys.path.append(os.path.abspath("../../score_sde_pytorch"))
 import score_sde_pytorch.sampling as sampling
+from score_sde_pytorch import sde_lib
 sys.path.pop()
 
 
 class CorrectorWrapper(object):
-    def __init__(self, corrector_name_x: str, corrector_name_l: str, decoder,
+    # TODO: This should probably be set up with hydra?
+    def __init__(self, corrector_name_x: str, corrector_name_l: str,
+                 sde_name_x: str, sde_name_l: str, decoder,
                  number_corrector_steps: int = 1) -> None:
-        corrector_class_x = sampling.get_corrector(corrector_name_x)
-        corrector_class_l = sampling.get_corrector(corrector_name_l)
+        corrector_class_x = sampling.get_corrector(corrector_name_x.lower())
+        corrector_class_l = sampling.get_corrector(corrector_name_l.lower())
+
+
+        # Annealed Langevin corrector uses sde.alphas (depending on beta range)
+        # and sde.marginal_prob, and sde.N, and sde.T
+        # Langevin corrector uses N, T, alphas.
+        if sde_name_x.lower() == "vpsde":
+            sde_x = sde_lib.VPSDE(beta_min=..., beta_max=..., N=...)
+        elif sde_name_x.lower() == "subvpsde":
+            sde_x = sde_lib.subVPSDE(beta_min=..., beta_max=..., N=...)
+        elif sde_name_x.lower() == "vesde":
+            sde_x = sde_lib.VESDE(sigma_min=..., sigma_max=..., N=...)
+        else:
+            raise ValueError(f"Unknown sde name: {sde_name_x}")
+
+        if sde_name_l.lower() == "vpsde":
+            sde_l = sde_lib.VPSDE(beta_min=..., beta_max=..., N=...)
+        elif sde_name_l.lower() == "subvpsde":
+            sde_l = sde_lib.subVPSDE(beta_min=..., beta_max=..., N=...)
+        elif sde_name_l.lower() == "vesde":
+            sde_l = sde_lib.VESDE(sigma_min=..., sigma_max=..., N=...)
+        else:
+            raise ValueError(f"Unknown sde name: {sde_name_l}")
 
         self._score_x = None
         self._score_l = None
         # TODO: Set up the sde and snr arguments correctly.
-        self._corrector_x = corrector_class_x(sde=None, score_fn=lambda x, t: self.get_score_x(), snr=None, n_steps=1)
-        self._corrector_l = corrector_class_l(sde=None, score_fn=lambda l, t: self.get_score_l(), snr=None, n_steps=1)
+        self._corrector_x = corrector_class_x(sde=sde_x, score_fn=lambda x, t: self.get_score_x(), snr=None, n_steps=1)
+        self._corrector_l = corrector_class_l(sde=sde_l, score_fn=lambda l, t: self.get_score_l(), snr=None, n_steps=1)
         self._decoder = decoder
         self._number_corrector_steps = number_corrector_steps
 
