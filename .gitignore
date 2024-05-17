@@ -164,3 +164,5 @@ singlerun/
 wandb/
 runs/
 clean/
+
+.idea/
