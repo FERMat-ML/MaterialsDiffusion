@@ -1,9 +1,8 @@
 import os
 import sys
 import torch
-# TODO: Set up git dependency so that everybody has this repository in the lib directory.
-sys.path.append(os.path.abspath("../../lib/score_sde_pytorch"))
-import lib.score_sde_pytorch.sampling as sampling
+sys.path.append(os.path.abspath("../../score_sde_pytorch"))
+import score_sde_pytorch.sampling as sampling
 sys.path.pop()
 
 
