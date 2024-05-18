@@ -3,15 +3,13 @@ import sys
 import torch
 sys.path.append(os.path.abspath("../score_sde_pytorch"))
 import score_sde_pytorch.sampling as sampling
-from score_sde_pytorch import sde_lib
 sys.path.pop()
 
 
 class CorrectorWrapper(object):
     # TODO: This should probably be set up with hydra?
-    def __init__(self, corrector_name_x: str, corrector_name_l: str,
-                 sde_name_x: str, sde_name_l: str, decoder, step_lr_x: float,
-                 step_lr_l: float, sigma_begin_x: torch.Tensor,
+    def __init__(self, corrector_name_x: str, corrector_name_l: str, sde_name_x: str, sde_name_l: str,
+                 decoder: torch.nn.Module, step_lr_x: float, step_lr_l: float, sigma_begin_x: torch.Tensor,
                  number_corrector_steps: int = 1) -> None:
         corrector_class_x = sampling.get_corrector(corrector_name_x.lower())
         corrector_class_l = sampling.get_corrector(corrector_name_l.lower())
@@ -20,20 +18,20 @@ class CorrectorWrapper(object):
         # fractional coordinates with corrector_name_x = "ald" and sde_name_x = "vesde". All other possibilities are not
         # tested yet.
         if sde_name_x.lower() == "vpsde":
-            sde_x = sde_lib.VPSDE()
+            sde_x = sampling.sde_lib.VPSDE()
         elif sde_name_x.lower() == "subvpsde":
-            sde_x = sde_lib.subVPSDE()
+            sde_x = sampling.sde_lib.subVPSDE()
         elif sde_name_x.lower() == "vesde":
-            sde_x = sde_lib.VESDE()
+            sde_x = sampling.sde_lib.VESDE()
         else:
             raise ValueError(f"Unknown sde name: {sde_name_x}")
 
         if sde_name_l.lower() == "vpsde":
-            sde_l = sde_lib.VPSDE()
+            sde_l = sampling.sde_lib.VPSDE()
         elif sde_name_l.lower() == "subvpsde":
-            sde_l = sde_lib.subVPSDE()
+            sde_l = sampling.sde_lib.subVPSDE()
         elif sde_name_l.lower() == "vesde":
-            sde_l = sde_lib.VESDE()
+            sde_l = sampling.sde_lib.VESDE()
         else:
             raise ValueError(f"Unknown sde name: {sde_name_l}")
 
