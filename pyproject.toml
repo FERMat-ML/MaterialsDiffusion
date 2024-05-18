@@ -17,6 +17,7 @@ dependencies = [
    "p_tqdm",
    "pyxtal",
    "einops",
+   "smact"
 ]
 description = "Fork of DiffCSP with MatterGen-like improvements"
 readme = "README.md"
