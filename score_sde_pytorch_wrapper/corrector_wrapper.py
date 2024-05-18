@@ -46,6 +46,7 @@ class CorrectorWrapper(object):
                                               snr=(step_lr_l / 2.0) ** 0.5, n_steps=1)
         self._decoder = decoder
         self._number_corrector_steps = number_corrector_steps
+        self._dummy_tensor = torch.tensor([1])
 
     def get_corrector_update(self, time_emb: torch.Tensor, atom_types: torch.tensor, x_t: torch.tensor,
                              l_t: torch.tensor, num_atoms: torch.tensor, batch: torch.tensor, sigma_norm: torch.tensor,
@@ -54,8 +55,8 @@ class CorrectorWrapper(object):
         for i in range(self._number_corrector_steps):
             self._score_l, self._score_x = self._decoder(time_emb, atom_types, x_t, l_t, num_atoms, batch)
             self._score_x = -self._score_x * torch.sqrt(sigma_norm)
-            x_t, _ = self._corrector_x.update_fn(x_t, time_emb)
-            l_t, _ = self._corrector_l.update_fn(l_t, time_emb)
+            x_t, _ = self._corrector_x.update_fn(x_t, self._dummy_tensor)
+            l_t, _ = self._corrector_l.update_fn(l_t, self._dummy_tensor)
         return x_t, l_t
 
     def _get_score_x(self):
