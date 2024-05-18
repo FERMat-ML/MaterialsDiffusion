@@ -1,7 +1,7 @@
 import os
 import sys
 import torch
-sys.path.append(os.path.abspath("../../score_sde_pytorch"))
+sys.path.append(os.path.abspath("../score_sde_pytorch"))
 import score_sde_pytorch.sampling as sampling
 from score_sde_pytorch import sde_lib
 sys.path.pop()
