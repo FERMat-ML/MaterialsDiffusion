@@ -41,9 +41,9 @@ class CorrectorWrapper(object):
 
         sde_x.marginal_prob = lambda x, t: (None, self._sigma_x / sigma_begin_x)
         self._corrector_x = corrector_class_x(sde=sde_x, score_fn=lambda x, t: self._get_score_x(),
-                                              snr=step_lr_x ** 0.5, n_steps=1)
+                                              snr=(step_lr_x / 2.0) ** 0.5, n_steps=1)
         self._corrector_l = corrector_class_l(sde=sde_l, score_fn=lambda l, t: self._get_score_l(),
-                                              snr=step_lr_l ** 0.5, n_steps=1)
+                                              snr=(step_lr_l / 2.0) ** 0.5, n_steps=1)
         self._decoder = decoder
         self._number_corrector_steps = number_corrector_steps
 
