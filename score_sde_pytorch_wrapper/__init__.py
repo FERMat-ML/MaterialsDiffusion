@@ -1,1 +1,1 @@
-from corrector_wrapper import CorrectorWrapper
+from .corrector_wrapper import CorrectorWrapper
