@@ -74,6 +74,8 @@ def main(args):
 
     if torch.cuda.is_available():
         model.to('cuda')
+    elif torch.backends.mps.is_available():
+        model.to("cpu")
 
 
     print('Evaluate the diffusion model.')
