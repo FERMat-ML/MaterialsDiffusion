@@ -1,28 +1,20 @@
-import math, copy
-
-import numpy as np
+import math
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 
-from typing import Any, Dict
+from typing import Any
 
 import hydra
-import omegaconf
 import pytorch_lightning as pl
-from torch_scatter import scatter
-from torch_scatter.composite import scatter_softmax
-from torch_geometric.utils import to_dense_adj, dense_to_sparse
 from tqdm import tqdm
 
-from diffcsp.common.utils import PROJECT_ROOT
-from diffcsp.common.data_utils import (
-    EPSILON, cart_to_frac_coords, mard, lengths_angles_to_volume, lattice_params_to_matrix_torch,
-    frac_to_cart_coords, min_distance_sqr_pbc)
+from diffcsp.common.data_utils import lattice_params_to_matrix_torch
 
 from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal
+
+from score_sde_pytorch_wrapper import CorrectorWrapper
 
 MAX_ATOMIC_NUM=100
 
@@ -148,6 +140,10 @@ class CSPDiffusion(BaseModule):
             'lattices' : l_T
         }}
 
+        corrector_wrapper = CorrectorWrapper(
+            corrector_name_x="ald", corrector_name_l="none", sde_name_x="vesde", sde_name_l="vpsde",
+            decoder=self.decoder, step_lr_x=step_lr, step_lr_l=step_lr, sigma_begin_x=self.sigma_scheduler.sigma_begin,
+            number_corrector_steps=1)
 
         for t in tqdm(range(time_start, 0, -1)):
 
@@ -179,8 +175,8 @@ class CSPDiffusion(BaseModule):
             # Origin code : https://github.com/yang-song/score_sde/blob/main/sampling.py
 
             # Corrector
-
-            rand_l = torch.randn_like(l_T) if t > 1 else torch.zeros_like(l_T)
+            state = torch.get_rng_state()  # TODO: Remove this line and comment next line back in, just for testing.
+            # rand_l = torch.randn_like(l_T) if t > 1 else torch.zeros_like(l_T)
             rand_x = torch.randn_like(x_T) if t > 1 else torch.zeros_like(x_T)
 
             step_size = step_lr * (sigma_x / self.sigma_scheduler.sigma_begin) ** 2
@@ -194,7 +190,15 @@ class CSPDiffusion(BaseModule):
             x_t_minus_05 = x_t - step_size * pred_x + std_x * rand_x if not self.keep_coords else x_t
 
             l_t_minus_05 = l_t if not self.keep_lattice else l_t
-
+            torch.set_rng_state(state)  # TODO: Remove the following lines until predictor, just for testing.
+            assert not torch.all(torch.eq(x_t_minus_05, x_t))
+            assert torch.all(torch.eq(l_t_minus_05, l_t))
+            x_test_05, l_test_05 = corrector_wrapper.get_corrector_update(
+                time_emb, batch.atom_types, x_t, l_t, batch.num_atoms, batch.batch, sigma_norm, sigma_x)
+            print(x_t_minus_05)
+            print(x_test_05)
+            assert torch.all(torch.eq(x_t_minus_05, x_test_05))
+            assert torch.all(torch.eq(l_t_minus_05, l_test_05))
             # Predictor
 
             rand_l = torch.randn_like(l_T) if t > 1 else torch.zeros_like(l_T)
