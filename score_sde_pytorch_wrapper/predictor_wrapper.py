@@ -6,10 +6,28 @@ import score_sde_pytorch.sampling as sampling
 sys.path.pop()
 
 class PredictorWrapper(object):
+    '''
+    Wrapper class for utilizing score_sde_pytorch within DiffCSP
+
+    ATTRIBUTES
+    __________
+    predictor_name_x : name of predictor for fractional coordinates
+    predictor_name_l : name of predictor for lattice vectors
+    sde_name_x : SDE for fractional coordinate sampling
+    sde_name_l : SDE for lattice sampling
+    decoder : NN for returning score of coordinates and lattice
+    step_lr_x : step learning rate for fractional coordinates
+    step_lr_l : step learning rate for lattice vectors
+    sigma_min : minimum sigma for sigma scheduler - VESDE only!
+    sigma_max : maximum sigma for sigma scheduler - VESDE only!
+    beta_min : minimum beta for beta scheduler - subVPSDE or VPSDE only!
+    beta_max : maximum beta for beta scheduler - subVPSDE or VPSDE only!
+    number_predictor_steps : number of steps for each predictor round
+    '''
 
     def __init__(self, predictor_name_x:str, predictor_name_l:str, sde_name_x:str, sde_name_l:str,
-                 decoder:torch.nn.Module, step_lr_x:float, step_lr_l:float, sigma_begin_x:torch.Tensor,
-                 number_predictor_steps:int=1) -> None:
+                 decoder:torch.nn.Module, step_lr_x:float, step_lr_l:float, sigma_min:int=None, sigma_max:int=None, 
+                 beta_min:int=None, beta_max:int=None, number_predictor_steps:int=1) -> None:
 
         predictor_class_x = sampling.get_predictor(predictor_name_x.lower())
         predictor_class_l = sampling.get_predictor(predictor_name_l.lower())
@@ -20,7 +38,7 @@ class PredictorWrapper(object):
         elif sde_name_x.lower() == "subvpsde":
             sde_x = sampling.sde_lib.subVPSDE()
         elif sde_name_x.lower() == "vesde":
-            sde_x = sampling.sde_lib.VESDE()
+            sde_x = sampling.sde_lib.VESDE(sigma_min=sigma_min, sigma_max=sigma_max)
         else:
             raise ValueError(f"Unknown sde name: {sde_name_x}")
 
@@ -30,7 +48,7 @@ class PredictorWrapper(object):
         elif sde_name_l.lower() == "subvpsde":
             sde_l = sampling.sde_lib.subVPSDE()
         elif sde_name_l.lower() == "vesde":
-            sde_l = sampling.sde_lib.VESDE()
+            sde_l = sampling.sde_lib.VESDE(sigma_min=sigma_min, sigma_max=sigma_max)
         else:
             raise ValueError(f"Unknown sde name: {sde_name_l}")
 
@@ -59,6 +77,9 @@ class PredictorWrapper(object):
         @param batch : current batch
         @param sigma_norm : norm of sigma at time t
         @param sigma_x : sigma for fractional coordinates at time t
+
+        @return x_t : sampled fractional coordinates at t
+        @return l_t : sampled lattice vector at t
         '''
 
         # Iterate over number of steps
