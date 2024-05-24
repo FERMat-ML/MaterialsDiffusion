@@ -34,9 +34,9 @@ class PredictorWrapper(object):
 
         # Set SDE for fractional coords.
         if sde_name_x.lower() == "vpsde":
-            sde_x = sampling.sde_lib.VPSDE()
+            sde_x = sampling.sde_lib.VPSDE(beta_min=beta_min, beta_max=beta_max)
         elif sde_name_x.lower() == "subvpsde":
-            sde_x = sampling.sde_lib.subVPSDE()
+            sde_x = sampling.sde_lib.subVPSDE(beta_min=beta_min, beta_max=beta_max)
         elif sde_name_x.lower() == "vesde":
             sde_x = sampling.sde_lib.VESDE(sigma_min=sigma_min, sigma_max=sigma_max)
         else:
@@ -44,9 +44,9 @@ class PredictorWrapper(object):
 
         # Set SDE for lattice
         if sde_name_l.lower() == "vpsde":
-            sde_l = sampling.sde_lib.VPSDE()
+            sde_l = sampling.sde_lib.VPSDE(beta_min=beta_min, beta_max=beta_max)
         elif sde_name_l.lower() == "subvpsde":
-            sde_l = sampling.sde_lib.subVPSDE()
+            sde_l = sampling.sde_lib.subVPSDE(beta_min=beta_min, beta_max=beta_max)
         elif sde_name_l.lower() == "vesde":
             sde_l = sampling.sde_lib.VESDE(sigma_min=sigma_min, sigma_max=sigma_max)
         else:
@@ -63,9 +63,10 @@ class PredictorWrapper(object):
         self._decoder = decoder
         self.dummy_tensor = torch.tensor([1])
 
-    def get_predictor_update(self, time_emb:torch.Tensor, x_t:torch.tensor, l_t:torch.tensor,
-                             l_t:torch.tensor, num_atoms:torch.tensor, batch:torch.tensor, sigma_norm:torch.tensor,
-                             sigma_x:torch.tensor,) -> (torch.Tensor, torch.Tensor):
+    def get_predictor_update(
+            self, time_emb:torch.Tensor, x_t:torch.tensor, 
+            l_t:torch.tensor, batch:torch.tensor, sigma_norm:torch.tensor
+        ) -> (torch.Tensor, torch.Tensor):
 
         '''
         Function to run predictor and update positions and fractional coordinates
@@ -86,7 +87,7 @@ class PredictorWrapper(object):
         for i in range(len(self._number_predictor_steps)):
 
             # Get score
-            self._score_l, self._score_x = self._decoder(time_emb, batch.atom_types, x_t, x_l, num_atoms, batch)
+            self._score_l, self._score_x = self._decoder(time_emb, batch.atom_types, x_t, x_l, batch.num_atoms, batch.batch)
             self._score_x *= -torch.sqrt(sigma_norm)
 
             # Update

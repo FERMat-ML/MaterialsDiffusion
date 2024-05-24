@@ -14,7 +14,7 @@ from diffcsp.common.data_utils import lattice_params_to_matrix_torch
 
 from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal
 
-from score_sde_pytorch_wrapper import CorrectorWrapper
+from score_sde_pytorch_wrapper import CorrectorWrapper, PredictorWrapper
 
 MAX_ATOMIC_NUM=100
 
@@ -145,6 +145,13 @@ class CSPDiffusion(BaseModule):
             decoder=self.decoder, step_lr_x=step_lr, step_lr_l=step_lr, sigma_begin_x=self.sigma_scheduler.sigma_begin,
             number_corrector_steps=1)
 
+        predictor_wrapper PredictorWrapper(
+            predictor_name_x="ancestral_sampling", predictor_name_l="ancestral_sampling", sde_name_x="vesde",
+            sde_name_l="vpsde", decoder=self.decoder, step_lr_x=step_lr, step_lr_l=step_lr, sigma_min=sigma_scheduler.sigma_begin,
+            sigma_max=sigma_scheduler.sigma_end, beta_min=beta_scheduler.beta_begin, beta_max=beta_scheduler.beta_end, 
+            number_corrector_steps=1
+        )
+
         for t in tqdm(range(time_start, 0, -1)):
 
             times = torch.full((batch_size, ), t, device = self.device)
@@ -216,6 +223,15 @@ class CSPDiffusion(BaseModule):
 
             l_t_minus_1 = c0 * (l_t_minus_05 - c1 * pred_l) + sigmas * rand_l if not self.keep_lattice else l_t
 
+            # Testing for predictor with score_sde_pytorch
+            #TODO: actual testing, ensure this works as intended, double check parameters
+            x_test_1, l_test_1 = predictor_wrapper.get_predictor_update(
+                time_emb, x_t_minus_05, l_t_minus_05, batch, sigma_norm
+            )
+
+            # Assert equality
+            assert torch.all(torch.eq(x_t_minus_1, x_test_1))
+            assert torch.all(torch.eq(l_t_minus_1, l_test_1))
 
             traj[t - 1] = {
                 'num_atoms' : batch.num_atoms,
