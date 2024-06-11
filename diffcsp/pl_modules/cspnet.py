@@ -261,7 +261,6 @@ class CSPNet(nn.Module):
             
 
     def forward(self, t, atom_types, frac_coords, lattices, num_atoms, node2graph):
-
         edges, frac_diff = self.gen_edges(num_atoms, frac_coords, lattices, node2graph)
         edge2graph = node2graph[edges[0]]
         if self.smooth:

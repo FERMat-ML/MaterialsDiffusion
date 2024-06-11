@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 from typing import Any, Dict
-
+import ml_collections
 import hydra
 import omegaconf
 import pytorch_lightning as pl
@@ -23,9 +23,12 @@ from diffcsp.common.data_utils import (
     frac_to_cart_coords, min_distance_sqr_pbc)
 
 from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal
+from diffcsp.diffusion_categorical import CategoricalDiffusion, get_diffusion_betas
 
 MAX_ATOMIC_NUM=100
 
+def config_dict(**kwargs):
+    return ml_collections.ConfigDict(initial_dictionary=kwargs)
 
 class BaseModule(pl.LightningModule):
     def __init__(self, *args, **kwargs) -> None:
@@ -70,6 +73,7 @@ class CSPDiffusion(BaseModule):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         
+        # TODO: See if model produces logits
         self.decoder = hydra.utils.instantiate(self.hparams.decoder, latent_dim = self.hparams.latent_dim + self.hparams.time_dim, pred_type = True, smooth = True)
         self.beta_scheduler = hydra.utils.instantiate(self.hparams.beta_scheduler)
         self.sigma_scheduler = hydra.utils.instantiate(self.hparams.sigma_scheduler)
@@ -77,8 +81,15 @@ class CSPDiffusion(BaseModule):
         self.time_embedding = SinusoidalTimeEmbeddings(self.time_dim)
         self.keep_lattice = self.hparams.cost_lattice < 1e-5
         self.keep_coords = self.hparams.cost_coord < 1e-5
-
-
+        self.d3pm = CategoricalDiffusion(
+            betas=get_diffusion_betas(config_dict(type='jsd', start=1e-4, stop=0.02, num_timesteps=1000)),
+            model_prediction='x_start',
+            model_output='logits',
+            transition_mat_type='absorbing',
+            transition_bands=None,
+            loss_type='hybrid',
+            hybrid_coeff=0.001,
+            num_classes=100)
 
     def forward(self, batch):
 
@@ -105,26 +116,29 @@ class CSPDiffusion(BaseModule):
         sigmas_norm_per_atom = sigmas_norm.repeat_interleave(batch.num_atoms)[:, None]
         input_frac_coords = (frac_coords + sigmas_per_atom * rand_x) % 1.
 
-        gt_atom_types_onehot = F.one_hot(batch.atom_types - 1, num_classes=MAX_ATOMIC_NUM).float()
+        # TODO: Check if I need any of these three lines
+        #gt_atom_types_onehot = F.one_hot(batch.atom_types - 1, num_classes=MAX_ATOMIC_NUM).float()
+        
+        #rand_t = torch.randn_like(gt_atom_types_onehot)
 
-        rand_t = torch.randn_like(gt_atom_types_onehot)
-
-        atom_type_probs = (c0.repeat_interleave(batch.num_atoms)[:, None] * gt_atom_types_onehot + c1.repeat_interleave(batch.num_atoms)[:, None] * rand_t)
-
+        #atom_type_probs = (c0.repeat_interleave(batch.num_atoms)[:, None] * gt_atom_types_onehot + c1.repeat_interleave(batch.num_atoms)[:, None] * rand_t)
+        noisy_atom_types = self.d3pm.get_noisy_data(batch.atom_types,times)
+        
         if self.keep_coords:
             input_frac_coords = frac_coords
 
         if self.keep_lattice:
             input_lattice = lattices
 
-        pred_l, pred_x, pred_t = self.decoder(time_emb, atom_type_probs, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
+        pred_l, pred_x, pred_t = self.decoder(time_emb, noisy_atom_types, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
 
         tar_x = d_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
 
         loss_lattice = F.mse_loss(pred_l, rand_l)
         loss_coord = F.mse_loss(pred_x, tar_x)
-        loss_type = F.mse_loss(pred_t, rand_t)
-
+        # TODO: Swap out loss
+        #loss_type = F.mse_loss(pred_t, rand_t)
+        loss_type = self.d3pm.standalone_losses(batch.atom_types, times, noisy_atom_types, pred_t)
 
         loss = (
             self.hparams.cost_lattice * loss_lattice +
@@ -189,6 +203,8 @@ class CSPDiffusion(BaseModule):
             if self.keep_lattice:
                 l_t = l_T
 
+
+            # TODO: Can I uses same sampling here?
             # Corrector
 
             rand_l = torch.randn_like(l_T) if t > 1 else torch.zeros_like(l_T)
