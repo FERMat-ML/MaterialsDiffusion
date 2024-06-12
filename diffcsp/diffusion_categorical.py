@@ -15,7 +15,7 @@
 
 """Diffusion for discrete state spaces."""
 
-import diffcsp.d3pm_utils
+from diffcsp import d3pm_utils
 # import jax
 # from jax import lax
 # import jax.numpy as jnp
@@ -345,11 +345,9 @@ class CategoricalDiffusion(nn.Module):
         #print (a_t.shape)
         #assert a_t.shape == (B, self.num_classes, self.num_classes)
         # out = a_t[x.tolist()]
-        x_onehot = F.one_hot(x.view(B, -1).to(torch.int64), num_classes=self.num_classes).to(torch.float32)
-        #print (x_onehot.shape)
+        x_onehot = F.one_hot(torch.unsqueeze(x,-1).to(torch.int64), num_classes=self.num_classes).to(torch.float32)
         out = torch.matmul(x_onehot, a_t)
-        #print(out.shape)
-        return out
+        return torch.squeeze(out,1)
 
     def _at_onehot(self, a, t, x):
         """Extract coefficients at specified timesteps t and conditioning data x.
@@ -368,13 +366,12 @@ class CategoricalDiffusion(nn.Module):
         # x.shape = (bs, channels, height, width, num_classes)
         # a[t]shape = (bs, num_classes, num_classes)
         # out.shape = (bs, height, width, channels, num_classes)
-        B, C, W = x.shape
+        #B, C, W = x.shape
         a_t = torch.index_select(a, dim=0, index=t)
         assert a_t.shape == (x.shape[0], self.num_classes, self.num_classes)
-        x = x.view(B, -1, self.num_classes)
-        out = torch.matmul(x, a_t)
-        out = out.view(B, C, self.num_classes)
-        return out
+        #x = x.view(B, -1, self.num_classes)
+        out = torch.matmul(torch.unsqueeze(x,1), a_t)
+        return torch.squeeze(out,1)
 
     def q_probs(self, x_start, t):
         """Compute probabilities of q(x_t | x_start).
@@ -446,7 +443,9 @@ class CategoricalDiffusion(nn.Module):
         # To avoid numerical issues clip the noise to a minimum value
         noise = torch.clamp(noise, min=torch.finfo(noise.dtype).tiny, max=1.)
         gumbel_noise = - torch.log(-torch.log(noise))
-        return torch.argmax(logits + gumbel_noise, dim=-1)
+        am = torch.argmax(logits + gumbel_noise, dim=-1)
+        return am
+        #return F.one_hot(am,num_classes=self.num_classes).to(torch.float32)
 
     def _get_logits_from_logistic_pars(self, loc, log_scale):
         """Computes logits for an underlying logistic distribution."""
@@ -758,21 +757,26 @@ class CategoricalDiffusion(nn.Module):
           the denoised image.
         """
         batch_size = t.shape[0]
-        true_logits = self.q_posterior_logits(x_start, x_t, t, x_start_logits=False)
+        true_logits = self.q_posterior_logits_eric(x_start, x_t, t, x_start_logits=False)
         model_logits, pred_x_start_logits = self.standalone_p_logits(output_logits, x=x_t, t=t)
 
         kl = d3pm_utils.categorical_kl_logits(logits1=true_logits, logits2=model_logits)
         assert kl.shape == x_start.shape
-        kl = d3pm_utils.meanflat(kl) / np.log(2.)
+        #kl = d3pm_utils.meanflat(kl) / np.log(2.)
+        kl = kl / np.log(2.)
         #kl = torch.mean(kl.view(batch_size, -1), dim=1) / np.log(2.)
 
         decoder_nll = -d3pm_utils.categorical_log_likelihood(x_start, model_logits)
         assert decoder_nll.shape == x_start.shape
-        decoder_nll = d3pm_utils.meanflat(decoder_nll) / np.log(2.)
+        #decoder_nll = d3pm_utils.meanflat(decoder_nll) / np.log(2.)
+        #we only have (pseudo) batch dimension so don't do meanflat, We still mean the resulting loss anyways. 
+        # interestingly this would average over all atoms rather than average over atoms in a material and then average over materials
+        #decoder_nll = d3pm_utils.meanflat(decoder_nll) / np.log(2.)
+        decoder_nll = decoder_nll / np.log(2.)
 
         # At the first timestep return the decoder NLL,
         # otherwise return KL(q(x_{t-1}|x_t,x_start) || p(x_{t-1}|x_t))
-        assert kl.shape == decoder_nll.shape == t.shape == (x_start.shape[0],)
+        #assert kl.shape == decoder_nll.shape == t.shape == (x_start.shape[0],)
         return torch.where(t == 0, decoder_nll, kl), pred_x_start_logits
 
     def prior_bpd(self, x_start):
@@ -823,7 +827,7 @@ class CategoricalDiffusion(nn.Module):
         assert ce.shape == x_start.shape
         ce = d3pm_utils.meanflat(ce) / np.log(2.)
 
-        assert ce.shape == (x_start.shape[0],)
+        #assert ce.shape == (x_start.shape[0],)
 
         return ce
 

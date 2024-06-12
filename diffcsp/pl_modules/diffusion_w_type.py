@@ -89,7 +89,7 @@ class CSPDiffusion(BaseModule):
             transition_bands=None,
             loss_type='hybrid',
             hybrid_coeff=0.001,
-            num_classes=100)
+            num_classes=MAX_ATOMIC_NUM)
 
     def forward(self, batch):
 
@@ -122,7 +122,7 @@ class CSPDiffusion(BaseModule):
         #rand_t = torch.randn_like(gt_atom_types_onehot)
 
         #atom_type_probs = (c0.repeat_interleave(batch.num_atoms)[:, None] * gt_atom_types_onehot + c1.repeat_interleave(batch.num_atoms)[:, None] * rand_t)
-        noisy_atom_types = self.d3pm.get_noisy_data(batch.atom_types,times)
+        noisy_atom_types = self.d3pm.get_noisy_data(batch.atom_types,(times-1).repeat_interleave(batch.num_atoms))
         
         if self.keep_coords:
             input_frac_coords = frac_coords
@@ -130,7 +130,7 @@ class CSPDiffusion(BaseModule):
         if self.keep_lattice:
             input_lattice = lattices
 
-        pred_l, pred_x, pred_t = self.decoder(time_emb, noisy_atom_types, input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
+        pred_l, pred_x, pred_t = self.decoder(time_emb, F.one_hot(noisy_atom_types,num_classes=MAX_ATOMIC_NUM).float(), input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
 
         tar_x = d_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
 
@@ -138,7 +138,7 @@ class CSPDiffusion(BaseModule):
         loss_coord = F.mse_loss(pred_x, tar_x)
         # TODO: Swap out loss
         #loss_type = F.mse_loss(pred_t, rand_t)
-        loss_type = self.d3pm.standalone_losses(batch.atom_types, times, noisy_atom_types, pred_t)
+        loss_type = self.d3pm.standalone_losses(batch.atom_types, (times-1).repeat_interleave(batch.num_atoms), noisy_atom_types, pred_t).mean()
 
         loss = (
             self.hparams.cost_lattice * loss_lattice +
