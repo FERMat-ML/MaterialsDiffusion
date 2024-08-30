@@ -5,31 +5,31 @@ import torch.nn.functional as F
 
 class DFM(object):
 
-    def __init__(self, n_types, seq_len, max_t=1000.0):
-
-        # Initialize model
-        self.embedding = nn.Embedding(n_types+1, 128)
-        self.model = nn.Sequential(
-            nn.Linear(128 * seq_len, 512),
-            nn.SiLU(),
-            nn.Linear(512, 512),
-            nn.SiLU(),
-            nn.Linear(512, seq_len)
-        )
+    def __init__(self, n_types, base='mask', max_t=1000.0):
 
         # Set parameters
         self.max_t = max_t
         self.mask_token = n_types + 1
+
+        # Check for implemented absorbing state
+        if base not in ['mask', 'uniform']:
+            raise NotImplementedError
+        else:
+            self.base = base
 
     def mask(self, atoms, t):
         '''
         Mask atoms
         '''
         
-        # Mask atoms based on t
-        t_scaled = t / self.max_t
-        mask = torch.rand_like(atoms) < (1 - t_scaled[:, None])
-        atoms[mask] = self.mask_token
+        if self.base == 'mask':
+
+            # Mask atoms based on t
+            t_scaled = t / self.max_t
+            mask = torch.rand_like(atoms) < (1 - t_scaled[:, None])
+            atoms[mask] = self.mask_token
+
+        # Return atoms
         return atoms
 
 class RateMatrix(object):

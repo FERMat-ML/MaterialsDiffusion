@@ -24,7 +24,10 @@ from diffcsp.common.data_utils import (
 
 from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal
 from diffcsp.diffusion_categorical import CategoricalDiffusion, get_diffusion_betas
-from dfm import DFM
+
+# DFM
+from torch.distributions.categorical import Categorical
+from dfm import *
 
 MAX_ATOMIC_NUM=100
 
@@ -92,6 +95,10 @@ class CSPDiffusion(BaseModule):
             hybrid_coeff=0.001,
             num_classes=MAX_ATOMIC_NUM)
 
+        # DFM stuff
+        self.dfm = DFM(MAX_ATOMIC_NUM, base='mask', max_t=1000)
+        self.R_t = RateMatrix(MAX_ATOMIC_NUM)
+
     def forward(self, batch):
 
         batch_size = batch.num_graphs
@@ -138,8 +145,7 @@ class CSPDiffusion(BaseModule):
         ################
         # DFM Training #
         ################
-        dfm = DFM(MAX_ATOMIC_NUM, batch.num_atoms)
-        masked_atoms = dfm.mask(batch.atom_types, times)
+        masked_atoms = self.dfm.mask(batch.atom_types, times)
 
         # Prediction
         pred_l, pred_x, pred_t = self.decoder(time_emb, F.one_hot(masked_atoms,num_classes=MAX_ATOMIC_NUM + 1).float(), input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
@@ -167,11 +173,12 @@ class CSPDiffusion(BaseModule):
 
 
         batch_size = batch.num_graphs
-
         l_T, x_T = torch.randn([batch_size, 3, 3]).to(self.device), torch.rand([batch.num_nodes, 3]).to(self.device)
 
-        t_T = torch.randn([batch.num_nodes, MAX_ATOMIC_NUM]).to(self.device)
-
+        # Initialize masking state! 
+        # TODO: change this later to accept more base states
+        t_T = torch.ones([batch.num_nodes, MAX_ATOMIC_NUM]).to(self.device)
+        t_T *= MAX_ATOMIC_NUM + 1   # This will be the masking state
 
         if self.keep_coords:
             x_T = batch.frac_coords
@@ -186,6 +193,9 @@ class CSPDiffusion(BaseModule):
             'frac_coords' : x_T % 1.,
             'lattices' : l_T
         }}
+
+        # Save Time limit
+        t_lim = self.beta_scheduler.timesteps
 
         for t in tqdm(range(self.beta_scheduler.timesteps, 0, -1)):
 
@@ -218,7 +228,7 @@ class CSPDiffusion(BaseModule):
             # Corrector
 
             rand_l = torch.randn_like(l_T) if t > 1 else torch.zeros_like(l_T)
-            rand_t = torch.randn_like(t_T) if t > 1 else torch.zeros_like(t_T)
+            #rand_t = torch.randn_like(t_T) if t > 1 else torch.zeros_like(t_T)
             rand_x = torch.randn_like(x_T) if t > 1 else torch.zeros_like(x_T)
 
             step_size = step_lr * (sigma_x / self.sigma_scheduler.sigma_begin) ** 2
@@ -232,13 +242,20 @@ class CSPDiffusion(BaseModule):
 
             l_t_minus_05 = l_t
 
-            t_t_minus_05 = t_t
-
+            #t_t_minus_05 = t_t
+            # Sample new type - DFM
+            dt = 1 / t_lim
+            t_1 = Categorical(pred_t).sample()
+            new_t_rate = self.R_t(t_t, t_1, (t_lim-t)/t_lim)
+            step_probs = (new_t_rate * dt).clamp(max=1.0)
+            step_probs.scatter_(-1, t_t[:,:,None], 0.0)
+            step_probs.scatter_(-1, t_t[:,:,None], (1.0 - step_probs.sum(dim=-1, keepdim=True)).clamp(min=0.0))
+            new_t = Categorical(step_probs).sample()
+            # End DFM sample
 
             # Predictor
-
             rand_l = torch.randn_like(l_T) if t > 1 else torch.zeros_like(l_T)
-            rand_t = torch.randn_like(t_T) if t > 1 else torch.zeros_like(t_T)
+            #rand_t = torch.randn_like(t_T) if t > 1 else torch.zeros_like(t_T)
             rand_x = torch.randn_like(x_T) if t > 1 else torch.zeros_like(x_T)
 
             adjacent_sigma_x = self.sigma_scheduler.sigmas[t-1]
@@ -246,7 +263,7 @@ class CSPDiffusion(BaseModule):
             std_x = torch.sqrt((adjacent_sigma_x ** 2 * (sigma_x ** 2 - adjacent_sigma_x ** 2)) / (sigma_x ** 2))   
 
 
-            pred_l, pred_x, pred_t = self.decoder(time_emb, t_t_minus_05, x_t_minus_05, l_t_minus_05, batch.num_atoms, batch.batch)
+            pred_l, pred_x, pred_t = self.decoder(time_emb, new_t, x_t_minus_05, l_t_minus_05, batch.num_atoms, batch.batch)
 
             pred_x = pred_x * torch.sqrt(sigma_norm)
 
@@ -254,11 +271,11 @@ class CSPDiffusion(BaseModule):
 
             l_t_minus_1 = c0 * (l_t_minus_05 - c1 * pred_l) + sigmas * rand_l if not self.keep_lattice else l_t
 
-            t_t_minus_1 = c0 * (t_t_minus_05 - c1 * pred_t) + sigmas * rand_t
+            #t_t_minus_1 = c0 * (t_t_minus_05 - c1 * pred_t) + sigmas * rand_t
 
             traj[t - 1] = {
                 'num_atoms' : batch.num_atoms,
-                'atom_types' : t_t_minus_1,
+                'atom_types' : new_t,
                 'frac_coords' : x_t_minus_1 % 1.,
                 'lattices' : l_t_minus_1              
             }
