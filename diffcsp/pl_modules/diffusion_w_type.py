@@ -26,9 +26,13 @@ from diffcsp.pl_modules.diff_utils import d_log_p_wrapped_normal
 from diffcsp.diffusion_categorical import CategoricalDiffusion, get_diffusion_betas
 
 # DFM
+import sys
+import os
+print(os.getcwd())
+sys.path.append('/scratch/tje3676/RESEARCH/FERMAT/STAGE1/MaterialsDiffusion/diffcsp/pl_modules')
 from torch.distributions.categorical import Categorical
 from dfm import *
-
+torch.set_printoptions(threshold=10000)
 MAX_ATOMIC_NUM=100
 
 def config_dict(**kwargs):
@@ -96,8 +100,9 @@ class CSPDiffusion(BaseModule):
             num_classes=MAX_ATOMIC_NUM)
 
         # DFM stuff
-        self.dfm = DFM(MAX_ATOMIC_NUM, base='mask', max_t=1000)
-        self.R_t = RateMatrix(MAX_ATOMIC_NUM)
+        self.dfm = DFM(MAX_ATOMIC_NUM, base='mask')
+        self.R_t = RateMatrix(MAX_ATOMIC_NUM, self.device)
+        self.t_lim = self.beta_scheduler.timesteps
 
     def forward(self, batch):
 
@@ -144,14 +149,21 @@ class CSPDiffusion(BaseModule):
 
         ################
         # DFM Training #
-        ################
-        masked_atoms = self.dfm.mask(batch.atom_types, times)
+        ################ 
+        print('AAA')
+        t = (self.t_lim-times)/self.t_lim
+        print(t)
+        atoms = batch.atom_types.reshape((batch_size, -1))
+        masked_atoms = self.dfm.mask(atoms.float(), t).reshape(-1)
 
         # Prediction
-        pred_l, pred_x, pred_t = self.decoder(time_emb, F.one_hot(masked_atoms,num_classes=MAX_ATOMIC_NUM + 1).float(), input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
+        pred_l, pred_x, pred_t = self.decoder(time_emb, F.one_hot(masked_atoms.long(),num_classes=MAX_ATOMIC_NUM).float(), input_frac_coords, input_lattice, batch.num_atoms, batch.batch)
         tar_x = d_log_p_wrapped_normal(sigmas_per_atom * rand_x, sigmas_per_atom) / torch.sqrt(sigmas_norm_per_atom)
 
         # Get loss
+        print(batch.atom_types)
+        print(masked_atoms)
+        print(f'{pred_l}\t{rand_l}')
         loss_type = F.cross_entropy(pred_t, batch.atom_types)
         loss_lattice = F.mse_loss(pred_l, rand_l)
         loss_coord = F.mse_loss(pred_x, tar_x)
@@ -171,14 +183,13 @@ class CSPDiffusion(BaseModule):
     @torch.no_grad()
     def sample(self, batch, diff_ratio = 1.0, step_lr = 1e-5):
 
-
+        print('SAMPLE CALL')
         batch_size = batch.num_graphs
         l_T, x_T = torch.randn([batch_size, 3, 3]).to(self.device), torch.rand([batch.num_nodes, 3]).to(self.device)
 
         # Initialize masking state! 
         # TODO: change this later to accept more base states
-        t_T = torch.ones([batch.num_nodes, MAX_ATOMIC_NUM]).to(self.device)
-        t_T *= MAX_ATOMIC_NUM + 1   # This will be the masking state
+        t_T = torch.zeros((batch.num_nodes,)).to(self.device).long()
 
         if self.keep_coords:
             x_T = batch.frac_coords
@@ -193,9 +204,6 @@ class CSPDiffusion(BaseModule):
             'frac_coords' : x_T % 1.,
             'lattices' : l_T
         }}
-
-        # Save Time limit
-        t_lim = self.beta_scheduler.timesteps
 
         for t in tqdm(range(self.beta_scheduler.timesteps, 0, -1)):
 
@@ -215,7 +223,7 @@ class CSPDiffusion(BaseModule):
 
             x_t = traj[t]['frac_coords']
             l_t = traj[t]['lattices']
-            t_t = traj[t]['atom_types']
+            t_t = traj[t]['atom_types'].long()
 
             if self.keep_coords:
                 x_t = x_T
@@ -234,7 +242,7 @@ class CSPDiffusion(BaseModule):
             step_size = step_lr * (sigma_x / self.sigma_scheduler.sigma_begin) ** 2
             std_x = torch.sqrt(2 * step_size)
 
-            pred_l, pred_x, pred_t = self.decoder(time_emb, t_t, x_t, l_t, batch.num_atoms, batch.batch)
+            pred_l, pred_x, _ = self.decoder(time_emb, F.one_hot(t_t ,num_classes=MAX_ATOMIC_NUM).float(), x_t, l_t, batch.num_atoms, batch.batch)
 
             pred_x = pred_x * torch.sqrt(sigma_norm)
 
@@ -243,15 +251,6 @@ class CSPDiffusion(BaseModule):
             l_t_minus_05 = l_t
 
             #t_t_minus_05 = t_t
-            # Sample new type - DFM
-            dt = 1 / t_lim
-            t_1 = Categorical(pred_t).sample()
-            new_t_rate = self.R_t(t_t, t_1, (t_lim-t)/t_lim)
-            step_probs = (new_t_rate * dt).clamp(max=1.0)
-            step_probs.scatter_(-1, t_t[:,:,None], 0.0)
-            step_probs.scatter_(-1, t_t[:,:,None], (1.0 - step_probs.sum(dim=-1, keepdim=True)).clamp(min=0.0))
-            new_t = Categorical(step_probs).sample()
-            # End DFM sample
 
             # Predictor
             rand_l = torch.randn_like(l_T) if t > 1 else torch.zeros_like(l_T)
@@ -263,7 +262,7 @@ class CSPDiffusion(BaseModule):
             std_x = torch.sqrt((adjacent_sigma_x ** 2 * (sigma_x ** 2 - adjacent_sigma_x ** 2)) / (sigma_x ** 2))   
 
 
-            pred_l, pred_x, pred_t = self.decoder(time_emb, new_t, x_t_minus_05, l_t_minus_05, batch.num_atoms, batch.batch)
+            pred_l, pred_x, pred_t = self.decoder(time_emb, F.one_hot(t_t.long(),num_classes=MAX_ATOMIC_NUM).float(), x_t_minus_05, l_t_minus_05, batch.num_atoms, batch.batch)
 
             pred_x = pred_x * torch.sqrt(sigma_norm)
 
@@ -272,10 +271,26 @@ class CSPDiffusion(BaseModule):
             l_t_minus_1 = c0 * (l_t_minus_05 - c1 * pred_l) + sigmas * rand_l if not self.keep_lattice else l_t
 
             #t_t_minus_1 = c0 * (t_t_minus_05 - c1 * pred_t) + sigmas * rand_t
+            # Sample new type - DFM
+            dt = 1 / self.t_lim
+            t_t = t_t.reshape(batch_size, -1)
+            pred_t = pred_t.reshape(batch.num_nodes, -1)
+            pred_t = F.softmax(pred_t, dim=-1)
+            t_1 = Categorical(pred_t).sample().reshape(batch_size, -1)
+            new_t_rate = self.R_t(t_t, t_1, (self.t_lim-t)/self.t_lim).to(self.device)
+            step_probs = (new_t_rate * dt).clamp(max=1.0)
+            step_probs.scatter_(-1, t_t[:,:,None], 0.0)
+            step_probs.scatter_(-1, t_t[:,:,None], (1.0 - step_probs.sum(dim=-1, keepdim=True)).clamp(min=0.0))
+            new_t = Categorical(step_probs).sample()
+            print(new_t)
+            print(l_t_minus_1[0])
+            print(f'{t}\t{(self.t_lim-t)/self.t_lim}', flush=True)
+            # End DFM sample
 
+            
             traj[t - 1] = {
                 'num_atoms' : batch.num_atoms,
-                'atom_types' : new_t,
+                'atom_types' : new_t.reshape(-1),
                 'frac_coords' : x_t_minus_1 % 1.,
                 'lattices' : l_t_minus_1              
             }
